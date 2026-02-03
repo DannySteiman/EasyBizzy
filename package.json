@@ -1,0 +1,31 @@
+{
+  "name": "multi-tenant-saas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-tenant SaaS foundation for businesses and workspaces",
+  "scripts": {
+    "dev": "npm run dev:frontend & npm run dev:backend",
+    "dev:frontend": "next dev",
+    "dev:backend": "convex dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "deploy": "convex deploy"
+  },
+  "dependencies": {
+    "@clerk/nextjs": "^6.37.1",
+    "@polar-sh/sdk": "^0.42.5",
+    "convex": "^1.17.0",
+    "next": "^14.2.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.1.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.0",
+    "typescript": "^5.3.0"
+  }
+}

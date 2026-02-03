@@ -1,0 +1,28 @@
+---
+description: Mobile-first Main App UI contract (strict)
+globs: app/app/**/*
+alwaysApply: false
+---
+
+# Mobile-First UI Contract (Main App)
+
+Applies only to `app/app/[tenantId]/*`. Source of truth: `docs/ui-contract.md`.
+
+## MUST
+- Design mobile-first and support **360px** width.
+- Use **bottom navigation** for Main App.
+- Ensure tap targets are **>= 44px**.
+- Use cards/lists/stacked sections.
+- Each page has **1 primary purpose** and **<= 1 primary action**.
+
+## MUST NOT
+- Do NOT use tables.
+- Do NOT add sidebars/complex menus in Main App.
+- Do NOT introduce mouse/keyboard assumptions.
+- Do NOT add large modals; prefer full-screen dialog/sheet patterns.
+- Do NOT add native-only APIs yet (must remain web/PWA friendly).
+
+## Route contract for bottom tabs (no changes now)
+- Dashboard: OWNER/MANAGER -> `/app/[tenantId]/manager/home`, WORKER -> `/app/[tenantId]/worker/home`
+- Team/Shifts/Receipts/Settings: use role-scoped routes under `/manager/*` and `/worker/*`
+
