@@ -26,8 +26,12 @@ export default function EntryGatePage() {
   const router = useRouter();
   const { isLoading: authLoading, isAuthenticated } = useAuthUser();
   const [debugLog, setDebugLog] = useState<string[]>([]);
+  const [authTimedOut, setAuthTimedOut] = useState(false);
   const [isCreatingTrial, setIsCreatingTrial] = useState(false);
   const [trialCreated, setTrialCreated] = useState(false);
+  const [accessSyncDone, setAccessSyncDone] = useState(false);
+  const [accessSyncFoundTenants, setAccessSyncFoundTenants] = useState(false);
+  const [accessSyncCompletedAt, setAccessSyncCompletedAt] = useState<number | null>(null);
 
   // Only query Convex if authenticated
   const userInfo = useQuery(
@@ -47,11 +51,22 @@ export default function EntryGatePage() {
   
   // Mutation to create trial tenant
   const createTrialTenant = useMutation(api.tenants.createTrialTenant);
+  const syncMyAccessFromEmail = useMutation(api.team.syncMyAccessFromEmail);
 
   const addLog = (message: string) => {
     console.log(`[EntryGate] ${message}`);
     setDebugLog((prev) => [...prev.slice(-10), `${new Date().toISOString().slice(11, 19)} - ${message}`]);
   };
+
+  // Failsafe: if Clerk never finishes loading (adblock/network/race), don't trap the user forever.
+  useEffect(() => {
+    if (!authLoading) {
+      setAuthTimedOut(false);
+      return;
+    }
+    const t = window.setTimeout(() => setAuthTimedOut(true), 8000);
+    return () => window.clearTimeout(t);
+  }, [authLoading]);
 
   // Auto-create trial for new users
   const handleCreateTrial = async () => {
@@ -73,6 +88,59 @@ export default function EntryGatePage() {
     }
   };
 
+  // Auto-sync memberships from allowlisted email once per browser session
+  useEffect(() => {
+    if (authLoading) return;
+
+    // Not authenticated: nothing to sync
+    if (!isAuthenticated) {
+      setAccessSyncDone(true);
+      return;
+    }
+
+    // Already done this session
+    const storageKey = "easybizzy_access_sync_done";
+    if (typeof window !== "undefined" && window.sessionStorage.getItem(storageKey) === "1") {
+      setAccessSyncDone(true);
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        addLog("Syncing team access from email...");
+        const result = await syncMyAccessFromEmail();
+        setAccessSyncFoundTenants(!!result?.synced);
+        setAccessSyncCompletedAt(Date.now());
+
+        if (result?.synced) {
+          addLog(
+            `Access synced for ${result.tenantIds.length} workspace(s)` +
+              (result.tenantIds.length > 1 ? " (TODO: tenant switcher)" : "")
+          );
+        } else {
+          addLog("No allowlisted access found for this email");
+        }
+      } catch (error) {
+        console.error("Access sync failed:", error);
+        addLog(`Access sync failed: ${error}`);
+      } finally {
+        if (cancelled) return;
+        try {
+          window.sessionStorage.setItem(storageKey, "1");
+        } catch {
+          // ignore (e.g., storage blocked)
+        }
+        setAccessSyncDone(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, isAuthenticated, syncMyAccessFromEmail]);
+
   useEffect(() => {
     // Wait for auth to load
     if (authLoading) {
@@ -83,6 +151,11 @@ export default function EntryGatePage() {
     // Not authenticated -> show welcome page
     if (!isAuthenticated) {
       addLog("Not authenticated, showing welcome page");
+      return;
+    }
+
+    // Ensure allowlist sync runs before routing decisions (prevents creating trial incorrectly)
+    if (!accessSyncDone) {
       return;
     }
 
@@ -98,10 +171,19 @@ export default function EntryGatePage() {
 
     // ROUTING LOGIC
     
-    // 1. SAAS_ADMIN -> /admin
+    // SAAS_ADMIN users can also use the app as tenant owners/managers.
+    // Do not short-circuit to /admin here; let normal tenant/trial routing run.
     if (userInfo?.isSaasAdmin) {
-      addLog("SAAS_ADMIN detected, redirecting to /admin");
-      router.push("/admin");
+      addLog("SAAS_ADMIN detected, continuing through tenant/trial routing");
+    }
+
+    // If we just synced access and found tenants, give subscription status a moment to refresh
+    if (
+      accessSyncFoundTenants &&
+      !subscriptionStatus.hasTenant &&
+      accessSyncCompletedAt !== null &&
+      Date.now() - accessSyncCompletedAt < 3000
+    ) {
       return;
     }
 
@@ -148,15 +230,54 @@ export default function EntryGatePage() {
     }
 
     addLog("Reached end of routing logic");
-  }, [authLoading, isAuthenticated, userInfo, subscriptionStatus, trialStatus, router, isCreatingTrial, trialCreated]);
+  }, [
+    authLoading,
+    isAuthenticated,
+    accessSyncDone,
+    accessSyncFoundTenants,
+    accessSyncCompletedAt,
+    userInfo,
+    subscriptionStatus,
+    trialStatus,
+    router,
+    isCreatingTrial,
+    trialCreated,
+  ]);
 
   // Loading state
   if (authLoading) {
     return (
       <div className="page-center">
         <div className="card">
-          <div className="spinner" />
-          <p className="subtitle">Loading...</p>
+          {!authTimedOut ? (
+            <>
+              <div className="spinner" />
+              <p className="subtitle">Loading...</p>
+            </>
+          ) : (
+            <>
+              <h1 className="title">Still loading</h1>
+              <p className="subtitle" style={{ marginTop: "0.5rem" }}>
+                Authentication didn&apos;t finish loading. This is usually caused by an ad blocker, a blocked third-party
+                script, or a transient network issue.
+              </p>
+              <button
+                className="btn btn-primary"
+                style={{ width: "100%", minHeight: 44, marginTop: "0.75rem" }}
+                onClick={() => window.location.reload()}
+              >
+                Reload
+              </button>
+              <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.5rem" }}>
+                <Link href="/sign-in" className="btn btn-secondary" style={{ flex: 1 }}>
+                  Sign in
+                </Link>
+                <Link href="/sign-up" className="btn btn-secondary" style={{ flex: 1 }}>
+                  Sign up
+                </Link>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );

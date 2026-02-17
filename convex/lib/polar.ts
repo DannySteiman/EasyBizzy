@@ -311,16 +311,17 @@ export function extractCustomerNameFromMetadata(
  * You need to update this with your actual Polar product IDs.
  * Get these from your Polar dashboard after creating products.
  */
-const POLAR_PRODUCT_TO_TIER: Record<string, "BASIC" | "PRO" | "ENTERPRISE"> = {
+const POLAR_PRODUCT_TO_TIER: Record<string, "BASIC" | "PRO" | "BUSINESS" | "ENTERPRISE"> = {
   // Sandbox Product IDs
   "ef6ac2cb-46e9-45da-a6a1-904b272b4593": "BASIC",
   "6c246b51-981c-4532-8acf-fa7614eae62b": "PRO",
-  "6531fabd-c5bc-45fe-ab45-2ac3f77b893d": "ENTERPRISE",
+  // Business (unlimited) — legacy product previously called "ENTERPRISE"
+  "6531fabd-c5bc-45fe-ab45-2ac3f77b893d": "BUSINESS",
 };
 
 export function mapProductIdToTier(
   productId: string
-): "BASIC" | "PRO" | "ENTERPRISE" | null {
+): "BASIC" | "PRO" | "BUSINESS" | "ENTERPRISE" | null {
   return POLAR_PRODUCT_TO_TIER[productId] ?? null;
 }
 
@@ -330,7 +331,7 @@ export function mapProductIdToTier(
  */
 export function setProductTierMapping(
   productId: string,
-  tier: "BASIC" | "PRO" | "ENTERPRISE"
+  tier: "BASIC" | "PRO" | "BUSINESS" | "ENTERPRISE"
 ): void {
   POLAR_PRODUCT_TO_TIER[productId] = tier;
 }

@@ -36,8 +36,8 @@ const FALLBACK_PLANS = [
     ],
   },
   {
-    tier: "ENTERPRISE" as const,
-    name: "Enterprise Plan",
+    tier: "BUSINESS" as const,
+    name: "Business Plan",
     price: 99.99,
     currency: "USD",
     interval: "month",
@@ -95,7 +95,7 @@ function PricingPageInner() {
   // Use Convex plans if available, otherwise fallback
   const plans = convexPlans ?? (useFallback ? FALLBACK_PLANS : undefined);
 
-  const handleSelectPlan = async (tier: "BASIC" | "PRO" | "ENTERPRISE") => {
+  const handleSelectPlan = async (tier: "BASIC" | "PRO" | "BUSINESS") => {
     setLoading(tier);
     setError(null);
 

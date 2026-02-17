@@ -621,6 +621,7 @@ export const getTenant = query({
       tenant,
       currentRole: tenantCtx.currentRole,
       currentBranchId: tenantCtx.currentBranchId,
+      currentUserId: tenantCtx.currentUserId,
     };
   },
 });
@@ -848,17 +849,31 @@ export const listAllTenants = query({
     
     const tenants = await ctx.db.query("tenants").collect();
     
-    // Get member count for each tenant
+    // Get stats for each tenant
     const tenantsWithStats = await Promise.all(
       tenants.map(async (tenant) => {
-        const members = await ctx.db
+        const memberships = await ctx.db
           .query("userTenants")
           .withIndex("by_tenant", (q) => q.eq("tenantId", tenant._id))
           .collect();
+
+        const branchCount = await ctx.db
+          .query("branches")
+          .withIndex("by_tenant", (q) => q.eq("tenantId", tenant._id))
+          .collect()
+          .then((b) => b.length);
+
+        const accessEmailCount = await ctx.db
+          .query("tenantAccessEmails")
+          .withIndex("by_tenant", (q) => q.eq("tenantId", tenant._id))
+          .collect()
+          .then((a) => a.length);
         
         return {
           ...tenant,
-          memberCount: members.length,
+          memberCount: memberships.length,
+          branchCount,
+          accessEmailCount,
         };
       })
     );
@@ -877,9 +892,11 @@ export const updateTenantSubscription = mutation({
     planTier: v.optional(v.union(
       v.literal("BASIC"),
       v.literal("PRO"),
+      v.literal("BUSINESS"),
       v.literal("ENTERPRISE")
     )),
     subscriptionStatus: v.optional(v.union(
+      v.literal("trialing"),
       v.literal("inactive"),
       v.literal("active"),
       v.literal("past_due"),
@@ -902,6 +919,43 @@ export const updateTenantSubscription = mutation({
     await ctx.db.patch(tenantId, cleanUpdates);
     
     return { success: true };
+  },
+});
+
+/**
+ * Extend a trial tenant by N days.
+ * SAAS_ADMIN only (support workflow).
+ */
+export const adminExtendTrial = mutation({
+  args: {
+    tenantId: v.id("tenants"),
+    days: v.number(), // positive integer recommended
+  },
+  handler: async (ctx, args) => {
+    await requireSaasAdmin(ctx);
+
+    const tenant = await ctx.db.get(args.tenantId);
+    if (!tenant) {
+      throw new Error("Tenant not found");
+    }
+
+    if (tenant.subscriptionStatus !== "trialing") {
+      throw new Error("Trial can only be extended for trialing tenants");
+    }
+
+    const days = Math.floor(args.days);
+    if (!Number.isFinite(days) || days <= 0 || days > 365) {
+      throw new Error("Invalid days");
+    }
+
+    const now = Date.now();
+    const currentEndsAt = tenant.trialEndsAt ?? now;
+    const base = Math.max(currentEndsAt, now);
+    const nextEndsAt = base + days * 24 * 60 * 60 * 1000;
+
+    await ctx.db.patch(args.tenantId, { trialEndsAt: nextEndsAt });
+
+    return { success: true, trialEndsAt: nextEndsAt };
   },
 });
 
@@ -1028,6 +1082,7 @@ export const adminDeleteTenant = action({
   },
   handler: async (ctx, args): Promise<{ success: boolean; deletedClerkUsers: number }> => {
     const shouldDeleteClerkUsers = args.deleteClerkUsers !== false;
+    let deletedClerkUsers = 0;
     
     // Get the user IDs to delete
     const result = await ctx.runQuery(api.tenants.getTenantUsersForDeletion, {
@@ -1040,35 +1095,67 @@ export const adminDeleteTenant = action({
       const clerkSecretKey = process.env.CLERK_SECRET_KEY;
       
       if (!clerkSecretKey) {
-        console.warn("CLERK_SECRET_KEY not set - cannot delete Clerk users");
-      } else {
-        console.log(`Deleting ${userIds.length} Clerk user(s)...`);
-        
-        for (const userId of userIds) {
-          try {
-            const response = await fetch(
-              `https://api.clerk.com/v1/users/${userId}`,
-              {
-                method: "DELETE",
-                headers: {
-                  "Authorization": `Bearer ${clerkSecretKey}`,
-                  "Content-Type": "application/json",
-                },
-              }
-            );
-            
-            if (response.ok) {
-              console.log(`Deleted Clerk user: ${userId}`);
-            } else if (response.status === 404) {
-              console.log(`Clerk user not found (already deleted?): ${userId}`);
-            } else {
-              const error = await response.text();
-              console.error(`Failed to delete Clerk user ${userId}:`, error);
-            }
-          } catch (error) {
-            console.error(`Error deleting Clerk user ${userId}:`, error);
+        // Important: if we continue and delete tenant data, the email(s) will still be "taken"
+        // because the Clerk users still exist. Fail loudly.
+        throw new Error(
+          "CLERK_SECRET_KEY is not set. Cannot delete Clerk users, so emails will remain taken."
+        );
+      }
+
+      const headers = {
+        Authorization: `Bearer ${clerkSecretKey}`,
+        "Content-Type": "application/json",
+      };
+
+      // Validate the key before deleting anything to avoid partial deletion.
+      const probe = await fetch("https://api.clerk.com/v1/users?limit=1", {
+        method: "GET",
+        headers,
+      });
+      if (!probe.ok) {
+        const body = await probe.text();
+        throw new Error(
+          `Clerk API authentication failed (${probe.status}). Check CLERK_SECRET_KEY. ${body}`
+        );
+      }
+
+      console.log(`Deleting ${userIds.length} Clerk user(s)...`);
+      const failures: Array<{ userId: string; status: number; body: string }> = [];
+
+      for (const userId of userIds) {
+        try {
+          const response = await fetch(`https://api.clerk.com/v1/users/${userId}`, {
+            method: "DELETE",
+            headers,
+          });
+
+          if (response.ok) {
+            deletedClerkUsers += 1;
+            console.log(`Deleted Clerk user: ${userId}`);
+            continue;
           }
+
+          if (response.status === 404) {
+            console.log(`Clerk user not found (already deleted?): ${userId}`);
+            continue;
+          }
+
+          const body = await response.text();
+          failures.push({ userId, status: response.status, body: body.slice(0, 800) });
+        } catch (error) {
+          failures.push({
+            userId,
+            status: 0,
+            body: String(error).slice(0, 800),
+          });
         }
+      }
+
+      if (failures.length > 0) {
+        const first = failures[0];
+        throw new Error(
+          `Failed to delete ${failures.length} Clerk user(s). Example: ${first.userId} status ${first.status}: ${first.body}`
+        );
       }
     }
     
@@ -1079,7 +1166,7 @@ export const adminDeleteTenant = action({
     
     return { 
       success: true, 
-      deletedClerkUsers: shouldDeleteClerkUsers ? userIds.length : 0,
+      deletedClerkUsers: shouldDeleteClerkUsers ? deletedClerkUsers : 0,
     };
   },
 });

@@ -639,6 +639,7 @@ export const linkSubscriptionToTenant = internalMutation({
     planTier: v.union(
       v.literal("BASIC"),
       v.literal("PRO"),
+      v.literal("BUSINESS"),
       v.literal("ENTERPRISE")
     ),
     subscriptionStatus: v.union(

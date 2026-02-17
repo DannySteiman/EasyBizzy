@@ -312,7 +312,8 @@ export function requirePlanTier(
     return;
   }
   
-  const tierOrder: PlanTier[] = ["BASIC", "PRO", "ENTERPRISE"];
+  // NOTE: "ENTERPRISE" is a legacy alias for "BUSINESS".
+  const tierOrder: PlanTier[] = ["BASIC", "PRO", "BUSINESS", "ENTERPRISE"];
   const currentTierIndex = tierOrder.indexOf(tenantCtx.planTier);
   const requiredTierIndex = tierOrder.indexOf(minimumTier);
   

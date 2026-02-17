@@ -36,10 +36,12 @@ import { api } from "./_generated/api";
 // PRODUCT IDs (must match convex/lib/polar.ts)
 // =============================================================================
 
-const TIER_TO_PRODUCT_ID: Record<"BASIC" | "PRO" | "ENTERPRISE", string> = {
+const TIER_TO_PRODUCT_ID: Record<"BASIC" | "PRO" | "BUSINESS" | "ENTERPRISE", string> = {
   // Sandbox Product IDs
   "BASIC": "ef6ac2cb-46e9-45da-a6a1-904b272b4593",
   "PRO": "6c246b51-981c-4532-8acf-fa7614eae62b",
+  // Business (unlimited) — legacy product previously called "ENTERPRISE"
+  "BUSINESS": "6531fabd-c5bc-45fe-ab45-2ac3f77b893d",
   "ENTERPRISE": "6531fabd-c5bc-45fe-ab45-2ac3f77b893d",
 };
 
@@ -75,6 +77,7 @@ export const startNewSubscriptionCheckout = action({
     planTier: v.union(
       v.literal("BASIC"),
       v.literal("PRO"),
+      v.literal("BUSINESS"),
       v.literal("ENTERPRISE")
     ),
     customerName: v.optional(v.string()),
@@ -193,6 +196,7 @@ export const startAnonymousCheckout = action({
     planTier: v.union(
       v.literal("BASIC"),
       v.literal("PRO"),
+      v.literal("BUSINESS"),
       v.literal("ENTERPRISE")
     ),
   },
@@ -301,6 +305,7 @@ export const createCheckout = action({
     planTier: v.union(
       v.literal("BASIC"),
       v.literal("PRO"),
+      v.literal("BUSINESS"),
       v.literal("ENTERPRISE")
     ),
   },
@@ -471,7 +476,7 @@ export const getSubscriptionStatus = query({
       planTier: tenant.planTier,
       subscriptionStatus: tenant.subscriptionStatus,
       isActive: tenant.subscriptionStatus === "active",
-      canUpgrade: tenant.planTier !== "ENTERPRISE",
+      canUpgrade: tenant.planTier !== "BUSINESS" && tenant.planTier !== "ENTERPRISE",
       canDowngrade: tenant.planTier !== "BASIC",
     };
   },
@@ -516,8 +521,8 @@ export const getAvailablePlans = query({
         productId: TIER_TO_PRODUCT_ID.PRO,
       },
       {
-        tier: "ENTERPRISE" as const,
-        name: "Enterprise Plan",
+        tier: "BUSINESS" as const,
+        name: "Business Plan",
         price: 99.99,
         currency: "USD",
         interval: "month",
@@ -528,7 +533,7 @@ export const getAvailablePlans = query({
           "Dedicated support",
           "API access",
         ],
-        productId: TIER_TO_PRODUCT_ID.ENTERPRISE,
+        productId: TIER_TO_PRODUCT_ID.BUSINESS,
       },
     ];
   },

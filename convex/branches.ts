@@ -18,8 +18,12 @@ import {
   requireManager,
   requireBranchAccess,
   canAccessBranch,
+  requireRole,
+  requireTenantContext,
 } from "./lib/guards";
 import { getEffectiveCapabilities } from "./lib/capabilities";
+import { Id } from "./_generated/dataModel";
+import { getMaxLocationsForPlan, getUpgradeMessage } from "./lib/locationLimits";
 
 // =============================================================================
 // BRANCH QUERIES
@@ -39,6 +43,8 @@ export const getBranches = query({
     const allBranches = await ctx.db
       .query("branches")
       .withIndex("by_tenant", (q) => q.eq("tenantId", tenantCtx.currentTenantId))
+      // Hide archived branches (undefined => active)
+      .filter((q) => q.neq(q.field("isArchived"), true))
       .collect();
     
     // Filter to only branches the user can access
@@ -88,9 +94,200 @@ export const getMainBranch = query({
       .withIndex("by_tenant_main", (q) => 
         q.eq("tenantId", tenantCtx.currentTenantId).eq("isMainBranch", true)
       )
+      .filter((q) => q.neq(q.field("isArchived"), true))
       .unique();
     
     return mainBranch;
+  },
+});
+
+// =============================================================================
+// LOCATIONS (Branches) — Vertical slice CRUD (plan-gated)
+// =============================================================================
+
+function normalizeBranchName(name: string): string {
+  const trimmed = name.trim();
+  if (trimmed.length === 0) {
+    throw new Error("Location name is required.");
+  }
+  if (trimmed.length > 60) {
+    throw new Error("Location name must be 60 characters or less.");
+  }
+  return trimmed;
+}
+
+async function assertBranchBelongsToTenant(
+  ctx: { db: any },
+  tenantId: Id<"tenants">,
+  branchId: Id<"branches">
+) {
+  const branch = await ctx.db.get(branchId);
+  if (!branch || branch.tenantId !== tenantId) {
+    throw new Error("Location not found.");
+  }
+  return branch as {
+    _id: Id<"branches">;
+    tenantId: Id<"tenants">;
+    name: string;
+    isMainBranch: boolean;
+    createdAt: number;
+    isArchived?: boolean;
+  };
+}
+
+/**
+ * List branches for Locations management.
+ * - OWNER + MANAGER only
+ * - Returns only non-archived branches
+ */
+export const list = query({
+  args: { tenantId: v.id("tenants") },
+  handler: async (ctx, args) => {
+    // Required by spec (and keeps tenant scoping explicit).
+    await requireTenantContext(ctx, args.tenantId);
+
+    // Guard: subscription allowed + OWNER/MANAGER role
+    const tenantCtx = await requireSubscriptionAllowed(ctx, args.tenantId);
+    requireRole(tenantCtx, ["OWNER", "MANAGER"]);
+
+    const branches = await ctx.db
+      .query("branches")
+      .withIndex("by_tenant", (q) => q.eq("tenantId", tenantCtx.currentTenantId))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .collect();
+
+    return branches.map((b: any) => ({
+      _id: b._id,
+      name: b.name,
+      isMainBranch: b.isMainBranch,
+      createdAt: b.createdAt,
+      isArchived: Boolean(b.isArchived),
+    }));
+  },
+});
+
+/**
+ * Create a new branch/location.
+ * - OWNER only
+ * - BASIC: max 1 active location
+ * - PRO+: multi-branch allowed
+ */
+export const create = mutation({
+  args: {
+    tenantId: v.id("tenants"),
+    name: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const tenantCtx = await requireSubscriptionAllowed(ctx, args.tenantId);
+    requireOwner(tenantCtx);
+
+    const name = normalizeBranchName(args.name);
+
+    const existing = await ctx.db
+      .query("branches")
+      .withIndex("by_tenant", (q) => q.eq("tenantId", tenantCtx.currentTenantId))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .collect();
+
+    const activeBranchCount = existing.length;
+    const effectivePlanTier = tenantCtx.subscriptionStatus === "trialing" ? "BASIC" : tenantCtx.planTier;
+    const maxAllowed = getMaxLocationsForPlan(effectivePlanTier);
+
+    if (activeBranchCount >= maxAllowed) {
+      throw new Error(getUpgradeMessage(effectivePlanTier));
+    }
+
+    const branchId = await ctx.db.insert("branches", {
+      tenantId: tenantCtx.currentTenantId,
+      name,
+      isMainBranch: false,
+      createdAt: Date.now(),
+      isArchived: false,
+    });
+
+    const created = await ctx.db.get(branchId);
+    return created;
+  },
+});
+
+/**
+ * Rename a branch/location.
+ * - OWNER only
+ */
+export const rename = mutation({
+  args: {
+    tenantId: v.id("tenants"),
+    branchId: v.id("branches"),
+    name: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const tenantCtx = await requireSubscriptionAllowed(ctx, args.tenantId);
+    requireOwner(tenantCtx);
+
+    const branch = await assertBranchBelongsToTenant(ctx, tenantCtx.currentTenantId, args.branchId);
+    if (branch.isArchived) {
+      throw new Error("Location not found.");
+    }
+
+    const name = normalizeBranchName(args.name);
+    await ctx.db.patch(args.branchId, { name });
+
+    return { success: true };
+  },
+});
+
+/**
+ * Archive a branch/location.
+ * - OWNER only
+ * - Cannot archive last active location
+ * - Cannot archive if any team members are assigned to it
+ */
+export const archive = mutation({
+  args: {
+    tenantId: v.id("tenants"),
+    branchId: v.id("branches"),
+  },
+  handler: async (ctx, args) => {
+    const tenantCtx = await requireSubscriptionAllowed(ctx, args.tenantId);
+    requireOwner(tenantCtx);
+
+    const branch = await assertBranchBelongsToTenant(ctx, tenantCtx.currentTenantId, args.branchId);
+    if (branch.isArchived) {
+      return { success: true };
+    }
+
+    const activeBranches = await ctx.db
+      .query("branches")
+      .withIndex("by_tenant", (q) => q.eq("tenantId", tenantCtx.currentTenantId))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .collect();
+
+    if (activeBranches.length <= 1) {
+      throw new Error("You must keep at least one active location.");
+    }
+
+    // Optional safety: prevent archiving when any memberships are assigned to this branch.
+    const assignedMembers = await ctx.db
+      .query("userTenants")
+      .withIndex("by_branch", (q) => q.eq("branchId", args.branchId))
+      .filter((q) => q.eq(q.field("tenantId"), tenantCtx.currentTenantId))
+      .collect();
+
+    if (assignedMembers.length > 0) {
+      throw new Error("Reassign team members before archiving this location.");
+    }
+
+    // Keep invariant: ensure there is always a main branch among active branches.
+    if (branch.isMainBranch) {
+      const nextMain = activeBranches.find((b: any) => String(b._id) !== String(branch._id));
+      if (nextMain) {
+        await ctx.db.patch(nextMain._id, { isMainBranch: true });
+      }
+      await ctx.db.patch(args.branchId, { isMainBranch: false });
+    }
+
+    await ctx.db.patch(args.branchId, { isArchived: true });
+    return { success: true };
   },
 });
 
@@ -120,6 +317,7 @@ export const createBranch = mutation({
     const existingBranches = await ctx.db
       .query("branches")
       .withIndex("by_tenant", (q) => q.eq("tenantId", tenantCtx.currentTenantId))
+      .filter((q) => q.neq(q.field("isArchived"), true))
       .collect();
 
     const caps = getEffectiveCapabilities(tenantCtx);

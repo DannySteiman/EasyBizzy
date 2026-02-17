@@ -42,14 +42,20 @@ const CAPABILITIES_BY_TIER: Record<PlanTier, Capabilities> = {
   },
   PRO: {
     multiBranch: true,
-    maxBranches: 5,
+    maxBranches: 3,
     maxWorkers: 30,
+    exportCsv: true,
+  },
+  BUSINESS: {
+    multiBranch: true,
+    maxBranches: null, // unlimited
+    maxWorkers: null, // unlimited
     exportCsv: true,
   },
   ENTERPRISE: {
     multiBranch: true,
-    maxBranches: null, // unlimited
-    maxWorkers: null, // unlimited
+    maxBranches: null, // unlimited (legacy alias)
+    maxWorkers: null, // unlimited (legacy alias)
     exportCsv: true,
   },
 };

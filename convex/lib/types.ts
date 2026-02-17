@@ -33,7 +33,8 @@ export type AppRole = TenantRole | "SAAS_ADMIN";
 /**
  * Subscription plan tiers - determines feature access
  */
-export type PlanTier = "BASIC" | "PRO" | "ENTERPRISE";
+// NOTE: "ENTERPRISE" is a legacy alias for "BUSINESS" (kept for backwards compatibility).
+export type PlanTier = "BASIC" | "PRO" | "BUSINESS" | "ENTERPRISE";
 
 /**
  * Subscription status values

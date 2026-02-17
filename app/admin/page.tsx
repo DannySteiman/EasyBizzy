@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useAction } from "convex/react";
@@ -21,6 +22,8 @@ export default function AdminPage() {
   
   // Mutations and Actions
   const updateTenant = useMutation(api.tenants.adminUpdateTenant);
+  const updateTenantSubscription = useMutation(api.tenants.updateTenantSubscription);
+  const extendTrial = useMutation(api.tenants.adminExtendTrial);
   const deleteTenant = useAction(api.tenants.adminDeleteTenant); // Action - also deletes Clerk users
   
   // Edit modal state
@@ -37,6 +40,19 @@ export default function AdminPage() {
     name: string;
   } | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // Plan/status modal state
+  const [billingTenant, setBillingTenant] = useState<{
+    id: Id<"tenants">;
+    name: string;
+    planTier: "BASIC" | "PRO" | "BUSINESS";
+    subscriptionStatus: string;
+    trialEndsAt?: number;
+  } | null>(null);
+  const [billingPlan, setBillingPlan] = useState<"BASIC" | "PRO" | "BUSINESS">("BASIC");
+  const [billingStatus, setBillingStatus] = useState<string>("inactive");
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [trialDays, setTrialDays] = useState(7);
 
   // Redirect non-SAAS_ADMIN users
   useEffect(() => {
@@ -83,9 +99,66 @@ export default function AdminPage() {
       setDeletingTenant(null);
     } catch (error) {
       console.error("Failed to delete tenant:", error);
-      alert("Failed to delete tenant");
+      const message =
+        (error as any)?.message ||
+        (typeof error === "string" ? error : "") ||
+        "Failed to delete tenant";
+      alert(message);
     } finally {
       setDeleteLoading(false);
+    }
+  };
+
+  const handleBillingClick = (tenant: any) => {
+    const rawTier = String(tenant.planTier ?? "BASIC");
+    const normalizedTier = (rawTier === "ENTERPRISE" ? "BUSINESS" : rawTier) as "BASIC" | "PRO" | "BUSINESS";
+    setBillingTenant({
+      id: tenant._id,
+      name: tenant.name,
+      planTier: normalizedTier,
+      subscriptionStatus: tenant.subscriptionStatus,
+      trialEndsAt: tenant.trialEndsAt,
+    });
+    setBillingPlan(normalizedTier);
+    setBillingStatus(tenant.subscriptionStatus);
+    setTrialDays(7);
+  };
+
+  const handleBillingSave = async () => {
+    if (!billingTenant) return;
+    setBillingLoading(true);
+    try {
+      // Manual "upgrade" from trial should become active immediately.
+      const nextStatus =
+        billingStatus === "trialing" && (billingPlan === "PRO" || billingPlan === "BUSINESS")
+          ? "active"
+          : billingStatus;
+
+      await updateTenantSubscription({
+        tenantId: billingTenant.id,
+        planTier: billingPlan,
+        subscriptionStatus: nextStatus as any,
+      });
+      setBillingTenant(null);
+    } catch (error) {
+      console.error("Failed to update billing:", error);
+      alert("Failed to update billing");
+    } finally {
+      setBillingLoading(false);
+    }
+  };
+
+  const handleExtendTrial = async () => {
+    if (!billingTenant) return;
+    setBillingLoading(true);
+    try {
+      await extendTrial({ tenantId: billingTenant.id, days: trialDays });
+      setBillingTenant(null);
+    } catch (error) {
+      console.error("Failed to extend trial:", error);
+      alert("Failed to extend trial");
+    } finally {
+      setBillingLoading(false);
     }
   };
 
@@ -120,6 +193,134 @@ export default function AdminPage() {
 
   return (
     <div style={{ padding: "2rem" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.75rem" }}>
+        <Link
+          href="/"
+          style={{
+            color: "var(--muted)",
+            textDecoration: "none",
+            fontSize: "0.875rem",
+            fontWeight: 600,
+          }}
+        >
+          Switch to Workspace
+        </Link>
+      </div>
+      {/* Billing Modal */}
+      {billingTenant && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1100,
+          }}
+        >
+          <div className="card" style={{ maxWidth: "520px", width: "90%", textAlign: "left" }}>
+            <h2 style={{ marginBottom: "0.25rem", fontWeight: "700" }}>Billing & Support</h2>
+            <p style={{ marginBottom: "1rem", color: "var(--muted)", fontSize: "0.875rem" }}>
+              {billingTenant.name}
+            </p>
+
+            <div style={{ display: "grid", gap: "0.75rem" }}>
+              <label style={{ display: "grid", gap: "0.375rem" }}>
+                <span style={{ fontSize: "0.875rem", fontWeight: 600 }}>Plan</span>
+                <select
+                  value={billingPlan}
+                  onChange={(e) => {
+                    const nextPlan = e.target.value as "BASIC" | "PRO" | "BUSINESS";
+                    setBillingPlan(nextPlan);
+                    // UX: if upgrading paid tier while currently trialing, default to active.
+                    if (billingStatus === "trialing" && (nextPlan === "PRO" || nextPlan === "BUSINESS")) {
+                      setBillingStatus("active");
+                    }
+                  }}
+                  style={{
+                    width: "100%",
+                    minHeight: 44,
+                    padding: "0 0.75rem",
+                    border: "1px solid #d1d5db",
+                    borderRadius: "0.5rem",
+                    background: "white",
+                  }}
+                >
+                  <option value="BASIC">BASIC</option>
+                  <option value="PRO">PRO</option>
+                  <option value="BUSINESS">BUSINESS</option>
+                </select>
+              </label>
+
+              <label style={{ display: "grid", gap: "0.375rem" }}>
+                <span style={{ fontSize: "0.875rem", fontWeight: 600 }}>Subscription status</span>
+                <select
+                  value={billingStatus}
+                  onChange={(e) => setBillingStatus(e.target.value)}
+                  style={{
+                    width: "100%",
+                    minHeight: 44,
+                    padding: "0 0.75rem",
+                    border: "1px solid #d1d5db",
+                    borderRadius: "0.5rem",
+                    background: "white",
+                  }}
+                >
+                  <option value="trialing">trialing</option>
+                  <option value="active">active</option>
+                  <option value="inactive">inactive</option>
+                  <option value="past_due">past_due</option>
+                  <option value="canceled">canceled</option>
+                </select>
+              </label>
+
+              {billingTenant.subscriptionStatus === "trialing" && (
+                <div style={{ border: "1px solid #a7f3d0", background: "#ecfdf5", borderRadius: "0.75rem", padding: "0.75rem" }}>
+                  <div style={{ fontWeight: 700, color: "#065f46" }}>Extend trial</div>
+                  <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.5rem" }}>
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={trialDays}
+                      onChange={(e) => setTrialDays(Number(e.target.value))}
+                      style={{
+                        width: 120,
+                        minHeight: 44,
+                        padding: "0 0.75rem",
+                        border: "1px solid #d1d5db",
+                        borderRadius: "0.5rem",
+                      }}
+                    />
+                    <span style={{ color: "#065f46", fontSize: "0.875rem" }}>days</span>
+                    <button className="btn btn-secondary" style={{ minHeight: 44 }} onClick={handleExtendTrial} disabled={billingLoading}>
+                      Extend
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", marginTop: "1rem" }}>
+              <button className="btn btn-secondary" onClick={() => setBillingTenant(null)} disabled={billingLoading}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={handleBillingSave} disabled={billingLoading}>
+                {billingLoading ? "Saving..." : "Save"}
+              </button>
+            </div>
+
+            <p style={{ marginTop: "0.75rem", fontSize: "0.75rem", color: "var(--muted)" }}>
+              Note: passwords are managed by Clerk and cannot be viewed.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Edit Modal */}
       {editingTenant && (
         <div style={{
@@ -315,9 +516,22 @@ export default function AdminPage() {
                 <p style={{ fontSize: "0.875rem", color: "var(--muted)" }}>
                   Members: {tenant.memberCount}
                 </p>
+                <p style={{ fontSize: "0.875rem", color: "var(--muted)" }}>
+                  Locations: {(tenant as any).branchCount ?? "—"} • Access emails: {(tenant as any).accessEmailCount ?? "—"}
+                </p>
+                {tenant.ownerEmail && (
+                  <p style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                    Owner email: <span style={{ fontFamily: "monospace" }}>{tenant.ownerEmail}</span>
+                  </p>
+                )}
                 <p style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
                   Created: {new Date(tenant.createdAt).toLocaleDateString()}
                 </p>
+                {tenant.subscriptionStatus === "trialing" && tenant.trialEndsAt && (
+                  <p style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                    Trial ends: {new Date(tenant.trialEndsAt).toLocaleDateString()}
+                  </p>
+                )}
                 
                 {tenant.polarSubscriptionId && (
                   <p style={{ 
@@ -338,6 +552,24 @@ export default function AdminPage() {
                   paddingTop: "1rem",
                   borderTop: "1px solid #e5e7eb"
                 }}>
+                  <Link
+                    href={`/admin/tenants/${tenant._id}`}
+                    style={{
+                      flex: 1,
+                      padding: "0.375rem 0.75rem",
+                      fontSize: "0.75rem",
+                      background: "#eff6ff",
+                      color: "#1d4ed8",
+                      border: "1px solid #bfdbfe",
+                      borderRadius: "0.375rem",
+                      cursor: "pointer",
+                      textDecoration: "none",
+                      textAlign: "center",
+                      lineHeight: "1.5rem",
+                    }}
+                  >
+                    Details
+                  </Link>
                   <button
                     onClick={() => handleEditClick(tenant)}
                     style={{
@@ -352,6 +584,21 @@ export default function AdminPage() {
                     }}
                   >
                     Edit
+                  </button>
+                  <button
+                    onClick={() => handleBillingClick(tenant)}
+                    style={{
+                      flex: 1,
+                      padding: "0.375rem 0.75rem",
+                      fontSize: "0.75rem",
+                      background: "#fff7ed",
+                      color: "#9a3412",
+                      border: "1px solid #fed7aa",
+                      borderRadius: "0.375rem",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Billing
                   </button>
                   <button
                     onClick={() => handleDeleteClick(tenant)}
