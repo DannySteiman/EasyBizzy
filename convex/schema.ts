@@ -258,6 +258,61 @@ export default defineSchema({
   }).index("by_tenant_branch_week", ["tenantId", "branchId", "weekStart"]),
 
   /**
+   * RECEIPTS TABLE
+   * ==============
+   * Stores uploaded receipt images and their OCR-extracted data.
+   * Scoped to tenant + branch. OWNER and MANAGER only.
+   *
+   * Lifecycle:
+   *   "pending"    -> image uploaded, OCR not yet triggered
+   *   "processing" -> OCR action running
+   *   "done"       -> OCR complete, fields populated
+   *   "failed"     -> OCR failed, ocrError contains reason
+   */
+  receipts: defineTable({
+    tenantId: v.id("tenants"),
+    branchId: v.id("branches"),
+
+    // Convex file storage reference for the receipt image
+    imageStorageId: v.string(),
+
+    // OCR processing status
+    status: v.union(
+      v.literal("pending"),
+      v.literal("processing"),
+      v.literal("done"),
+      v.literal("failed")
+    ),
+
+    // OCR-extracted fields (populated after processing)
+    supplierName: v.optional(v.string()),
+    totalAmount: v.optional(v.number()),
+    vatAmount: v.optional(v.number()),
+    vatPercent: v.optional(v.number()),
+    receiptDate: v.optional(v.string()), // ISO date string YYYY-MM-DD
+    currency: v.optional(v.string()),    // e.g. "ILS", "USD"
+    language: v.optional(v.string()),    // e.g. "he", "en"
+    rawOcrText: v.optional(v.string()),  // full raw text for debugging
+
+    // Manual corrections (override OCR values)
+    manualSupplierName: v.optional(v.string()),
+    manualTotalAmount: v.optional(v.number()),
+    manualVatAmount: v.optional(v.number()),
+    manualVatPercent: v.optional(v.number()),
+    manualReceiptDate: v.optional(v.string()),
+    manualCurrency: v.optional(v.string()),
+
+    // Error detail if status = "failed"
+    ocrError: v.optional(v.string()),
+
+    uploadedByUserId: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_tenant", ["tenantId"])
+    .index("by_tenant_branch", ["tenantId", "branchId"])
+    .index("by_tenant_branch_date", ["tenantId", "branchId", "createdAt"]),
+
+  /**
    * SLOT ASSIGNMENTS TABLE
    * ======================
    * Manager assigns workers to template slots for a given week.

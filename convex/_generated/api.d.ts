@@ -22,6 +22,8 @@ import type * as lib_tenantContext from "../lib/tenantContext.js";
 import type * as lib_types from "../lib/types.js";
 import type * as lib_weekUtils from "../lib/weekUtils.js";
 import type * as polarWebhooks from "../polarWebhooks.js";
+import type * as receiptOcr from "../receiptOcr.js";
+import type * as receipts from "../receipts.js";
 import type * as schedule from "../schedule.js";
 import type * as shiftTemplates from "../shiftTemplates.js";
 import type * as team from "../team.js";
@@ -49,6 +51,8 @@ declare const fullApi: ApiFromModules<{
   "lib/types": typeof lib_types;
   "lib/weekUtils": typeof lib_weekUtils;
   polarWebhooks: typeof polarWebhooks;
+  receiptOcr: typeof receiptOcr;
+  receipts: typeof receipts;
   schedule: typeof schedule;
   shiftTemplates: typeof shiftTemplates;
   team: typeof team;

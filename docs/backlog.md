@@ -18,9 +18,9 @@
 - Branch settings
 
 ## Receipts
-- Receipt upload
-- Receipt OCR
-- Receipt report export
+- [Sprint 004] Receipt schema + photo upload (camera/file picker, Convex storage)
+- [Sprint 005] OCR auto-extraction via Claude API (Hebrew + English, supplier/amount/VAT/date)
+- [Sprint 006] Filters, manual correction, CSV export, dashboard summary
 
 ## Deployment
 - Production deploy
