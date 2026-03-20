@@ -1,4 +1,5 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextRequest, NextFetchEvent, NextResponse } from "next/server";
 
 // Define public routes that don't require authentication
 // Note: /checkout/success is public to support anonymous checkout flow
@@ -12,12 +13,25 @@ const isPublicRoute = createRouteMatcher([
   "/sign-up(.*)",
 ]);
 
-export default clerkMiddleware(async (auth, req) => {
+const clerkHandler = clerkMiddleware(async (auth, req) => {
   // Protect all routes except public ones
   if (!isPublicRoute(req)) {
     await auth.protect();
   }
 });
+
+export default async function middleware(
+  req: NextRequest,
+  event: NextFetchEvent
+) {
+  try {
+    return await clerkHandler(req, event);
+  } catch (error) {
+    console.error("[Middleware] Clerk error:", error);
+    // Fail secure: redirect to sign-in rather than exposing a 500
+    return NextResponse.redirect(new URL("/sign-in", req.url));
+  }
+}
 
 export const config = {
   matcher: [
